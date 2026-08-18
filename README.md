@@ -3,17 +3,27 @@
 A production-grade, multi-tenant document ingestion pipeline for Retrieval-Augmented Generation (RAG) applications.
 
 This system is designed to handle **millions of documents** from **hundreds of tenants** while ensuring resource fairness, schema normalization, hybrid search retrieval, and grounded conversational generation.
+---
+
+## 📺 Walkthrough Demo
+
+A video demonstration showcasing the multi-tenant document ingestion pipeline, real-time stage timeline tracking, ingestion history portals, and Groq-grounded conversational search is available here:
+🎥 **[Play Walkthrough Demo (demo1.mp4)](demo1.mp4)**
 
 ---
 
 ## 🚀 Key Features
 
-*   **Thread-Offloaded Docling Document Parser**: Parses PDFs, Word files, HTML, and images into structured content preserving tables and layout. CPU-heavy PyTorch parsing is offloaded to background worker threads (`asyncio.to_thread`) to maintain 100% async API responsiveness.
+*   **Multi-Format Document Ingestion Router**: Branches files dynamically based on extension. Integrates a native spreadsheet parser (**Pandas + OpenPyXL**) for data tables, a BeautifulSoup (**BS4**) parser for HTML documents, and IBM's **Docling** for complex PDFs/Word files.
+*   **Defensive QA Gatekeeper**: Evaluates text density to detect bad OCR or empty extractions, dynamically marking documents that fail metrics as `NEEDS_REVIEW` and appending `low_confidence_extraction` tags instead of allowing raw corrupted vectors to pollute the index.
+*   **Object Storage Integration**: Raw documents are saved durably to local Blob Storage immediately upon receipt to guarantee disaster recovery and reprocessing capabilities.
 *   **Dual Vector Hybrid Search**: Synthesizes dense semantic embeddings (`sentence-transformers/all-MiniLM-L6-v2`) and sparse keyword indexes (`BM25`) directly in **Qdrant** with strict multi-tenant payload isolation (`tenant_id`, `collection_id`).
-*   **Tenant Concurrency Fairness**: An active fair scheduler (`TenantFairScheduler`) limits concurrent jobs per tenant using `asyncio.Semaphore` to prevent resource starvation.
-*   **Enterprise Multi-Role Prompt Contract**: Implements isolated system-role instructions based on top AI engineering standards (strict context grounding, explicit refusal strings, and in-line `[Source: <doc_id>, p.<page_num>]` citations).
-*   **Local LLM Chat Grounding**: Grounded question-answering with citation tracking powered by local **Ollama** (`qwen:0.5b` or other model configs) as well as OpenAI / Gemini endpoints.
-*   **RAGAS Evaluation & Monitor Dashboard**: A native Streamlit monitor page displaying real-time database-backed stats on ingestion stage latencies and Ragas LLM evaluations (Faithfulness, Answer Relevance, Context Precision).
+*   **Cross-Encoder Reranking & ACL Security**: Initial retrieval of top 50 chunks is re-scored by a `sentence-transformers` CrossEncoder down to top 5, while Qdrant enforces payload filtering against the user's `access_groups` (RBAC).
+*   **Data Integrity & Sticky-Row Injection**: Prevents tabular insurance data structure loss. During chunking, headers are dynamically prepended to data row contexts (e.g. `Header1: Value1, Header2: Value2`), preserving multi-column relationships.
+*   **Tenant Concurrency Fairness**: Per-tenant concurrency limits via `asyncio.Semaphore` prevent a single tenant from exhausting local resources (true round-robin scheduling is delegated to the production queueing layer).
+*   **Hostile-Witness Prompt & Legal Disclaimers**: Implements a prompt-tuned expert Legal and Medical Assessor persona. Answers are strictly grounded, and the model outputs `"UNABLE TO VERIFY"` if the context is insufficient. Prompts automatically inject legal disclaimers when parsing unverified structures.
+*   **Local LLM Chat Grounding**: Grounded question-answering with citation tracking powered by local **Ollama** (`llama3.2:1b` or other model configs) as well as OpenAI / Gemini endpoints.
+*   **Asynchronous RAGAS Evaluation**: Executes the asynchronous evaluation loop of RAGAS metrics (**Faithfulness**, **Context Precision**, and **Answer Relevancy**) using an isolated background task, decoupled from the core application thread via lazy-loading imports.
 *   **Ultra-Sleek Glassmorphic UI**: High-end Streamlit dashboard with custom CSS, dark radial gradients, responsive stage timelines, and real-time workspace context switching.
 *   **Jaeger Distributed Tracing**: Complete OpenTelemetry span logging to track document ingestion and chat traces.
 
@@ -35,9 +45,9 @@ docker compose up -d
 *   **Jaeger Traces**: http://localhost:16686
 
 ### 2. Configure Local LLM (Ollama)
-Pull and run the lightweight `qwen:0.5b` model:
+Pull and run the lightweight `llama3.2:1b` model:
 ```powershell
-ollama run qwen:0.5b
+ollama run llama3.2:1b
 ```
 
 ### 3. Install Dependencies
@@ -65,7 +75,7 @@ SPARSE_EMBEDDING_MODEL=Qdrant/bm25
 JAEGER_ENDPOINT=localhost:4317
 
 LLM_PROVIDER=ollama
-LLM_MODEL=qwen:0.5b
+LLM_MODEL=llama3.2:1b
 OLLAMA_BASE_URL=http://localhost:11434/v1
 ```
 
@@ -85,14 +95,18 @@ streamlit run app.py
 
 ## 🧪 Testing
 
-To run the unit tests verifying the chunker, parser adapters, and fair scheduler:
+To run the offline isolated unit test suite verifying format routing, the QA gatekeeper, sticky row injection, and database multi-tenant filters:
 ```powershell
-python -m pytest
+python -m pytest -v tests/
 ```
+The test suite utilizes mocks for all external connections (Qdrant, embedding models, LLMs) to run deterministically in under 2 seconds.
 
 ---
 
 ## 🎬 Demo
 
-<video src="demo.mp4" controls width="100%"></video>
+Watch the full demonstration of the pipeline in action:
 
+[**👉 Click here to watch or download the demo video (`demo1.mp4`)**](https://github.com/Blaze-coder3/enterprise-rag-ingestion/raw/main/demo1.mp4)
+
+*(Note: Because the video is a high-quality 65MB file, GitHub's inline viewer may not preview it directly on the repository page. Clicking the link will allow you to stream or download the raw file.)*

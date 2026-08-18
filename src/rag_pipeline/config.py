@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # External Integrations (Optional)
     azure_di_endpoint: str | None = None
     azure_di_key: str | None = None
+    groq_api_key: str | None = None
     llm_provider: str = "mock"
     llm_model: str = "phi3"
     

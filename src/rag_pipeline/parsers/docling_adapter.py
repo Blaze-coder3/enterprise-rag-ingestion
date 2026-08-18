@@ -2,14 +2,23 @@ import tempfile
 import os
 import asyncio
 from typing import Set, Any
-from docling.document_converter import DocumentConverter
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.base_models import InputFormat
 from .base import BaseParser, ParseResult
 
 class DoclingAdapter(BaseParser):
-    """Adapter for Docling v2 using DocumentConverter."""
+    """Adapter for Docling v2 using DocumentConverter with OCR and Formula options."""
     
     def __init__(self):
-        self._converter = DocumentConverter()
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = True
+        
+        self._converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
     
     async def parse(self, file_bytes: bytes, filename: str, metadata: dict[str, Any]) -> ParseResult:
         # Docling currently requires a file path, so we write bytes to a temp file

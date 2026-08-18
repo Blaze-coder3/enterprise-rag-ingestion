@@ -1,7 +1,7 @@
 import json
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, text
 from .db_models import (
     Base, TenantModel, DocumentModel, DocumentVersionModel, 
     PipelineStageRunModel, DecisionEventModel, ChatEvaluationModel
@@ -32,6 +32,10 @@ class MetadataStore:
         """Create all tables."""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            try:
+                await conn.execute(text("ALTER TABLE documents ADD COLUMN metadata_dict JSON"))
+            except Exception:
+                pass
             
     async def create_tenant_if_not_exists(self, tenant_id: str, name: str) -> None:
         async with self.SessionLocal() as session:
@@ -50,7 +54,24 @@ class MetadataStore:
                     DocumentModel.document_id == document_id
                 )
             )
-            return result.scalar_one_or_none()
+            return result.scalars().first()
+
+    async def get_document_by_id(self, document_id: str) -> Optional[DocumentModel]:
+        async with self.SessionLocal() as session:
+            result = await session.execute(
+                select(DocumentModel).where(DocumentModel.document_id == document_id)
+            )
+            return result.scalars().first()
+
+    async def find_document_by_hash(self, tenant_id: str, content_hash: str) -> Optional[DocumentModel]:
+        async with self.SessionLocal() as session:
+            result = await session.execute(
+                select(DocumentModel).where(
+                    DocumentModel.tenant_id == tenant_id,
+                    DocumentModel.content_hash == content_hash
+                )
+            )
+            return result.scalars().first()
             
     async def create_document(self, doc_model: DocumentModel) -> None:
         async with self.SessionLocal() as session:

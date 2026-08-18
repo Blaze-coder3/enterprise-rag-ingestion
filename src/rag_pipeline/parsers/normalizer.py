@@ -17,6 +17,7 @@ class DocumentNormalizer:
     def normalize(self, document_id: str, tenant_id: str, version_id: str,
                   title: str, parse_result: ParseResult, parser_name: str, 
                   parser_version: str, quality_metrics: ParseQualityMetrics,
+                  content_hash: str, access_groups: List[str],
                   collection_id: str = "default") -> CanonicalDocument:
                   
         doc = CanonicalDocument(
@@ -24,6 +25,8 @@ class DocumentNormalizer:
             tenant_id=tenant_id,
             collection_id=collection_id,
             version_id=version_id,
+            content_hash=content_hash,
+            access_groups=access_groups,
             title=title,
             page_count=parse_result.page_count,
             parser_name=parser_name,

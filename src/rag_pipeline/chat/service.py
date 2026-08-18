@@ -6,7 +6,8 @@ from .memory import ConversationMemory
 from ..retrieval.query_engine import QueryEngine, RetrievedChunk
 from ..observability.logging import get_logger
 from ..observability.tracing import get_tracer
-from ..evaluation.evaluator import RagasEvaluator
+from ..evaluation.ragas_eval import RagasEvaluator
+from .reranker import CrossEncoderReranker
 
 logger = get_logger("chat_service")
 tracer = get_tracer("rag_pipeline")
@@ -30,11 +31,49 @@ class ChatService:
     def __init__(self, memory: ConversationMemory, query_engine: QueryEngine):
         self.memory = memory
         self.query_engine = query_engine
+        self.reranker = CrossEncoderReranker()
         
-    async def chat(self, tenant_id: str, message: str, conversation_id: Optional[str] = None, collection_id: Optional[str] = None) -> ChatResponse:
+    async def _expand_query(self, query: str, llm_provider: str) -> str:
+        try:
+            chat_messages = [
+                {"role": "system", "content": "You are a query expansion assistant. Reply with 2-3 search keywords or synonyms for the user's question, separated by spaces. Do not write full sentences or explanations."},
+                {"role": "user", "content": query}
+            ]
+            import openai
+            import os
+            
+            if llm_provider == "groq":
+                groq_key = os.getenv("GROQ_API_KEY")
+                groq_model = os.getenv("LLM_MODEL", "groq/compound-mini")
+                if groq_key:
+                    client = openai.AsyncOpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
+                    completion = await client.chat.completions.create(
+                        model=groq_model,
+                        messages=chat_messages,
+                        max_tokens=20
+                    )
+                    return completion.choices[0].message.content or ""
+            elif llm_provider == "openai":
+                openai_key = os.getenv("OPENAI_API_KEY")
+                openai_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+                if openai_key:
+                    client = openai.AsyncOpenAI(api_key=openai_key)
+                    completion = await client.chat.completions.create(
+                        model=openai_model,
+                        messages=chat_messages,
+                        max_tokens=20
+                    )
+                    return completion.choices[0].message.content or ""
+        except Exception:
+            pass
+        return ""
+
+    async def chat(self, tenant_id: str, message: str, conversation_id: Optional[str] = None, collection_id: Optional[str] = None, access_groups: Optional[List[str]] = None) -> ChatResponse:
         start_time = time.time()
+        import os
+        llm_provider = os.getenv("LLM_PROVIDER", "mock").lower()
         
-        with tracer.start_as_current_span("chat_turn") as span:
+        with tracer.start_as_current_span("chat_session") as span:
             span.set_attribute("tenant_id", tenant_id)
             
             # 1. Get or create conversation
@@ -43,13 +82,33 @@ class ChatService:
             # 2. Add user message to history
             await self.memory.add_message(conv_id, "user", message)
             
+            # Query Expansion (Optional)
+            search_query = message
+            if os.getenv("QUERY_EXPANSION", "false").lower() == "true" and llm_provider != "mock":
+                try:
+                    expanded_query = await self._expand_query(message, llm_provider)
+                    if expanded_query:
+                        search_query = f"{message} {expanded_query}"
+                        logger.info("Query expanded successfully", original=message, expanded=search_query)
+                except Exception as e:
+                    logger.error("Failed to expand query", error=str(e))
+            
             # 3. Retrieve relevant chunks
+            # We fetch top 50, then rerank down to top 5
             chunks = await self.query_engine.hybrid_search(
                 tenant_id=tenant_id,
-                query_text=message,
-                top_k=5,
-                collection_id=collection_id
+                query_text=search_query,
+                top_k=50,
+                collection_id=collection_id,
+                access_groups=access_groups
             )
+            
+            # 4. Rerank using CrossEncoder
+            # Convert retrieved chunks into dictionaries for the reranker
+            dict_chunks = [{"payload": {"content": c.content}, "chunk": c} for c in chunks]
+            reranked = self.reranker.rerank(query=message, results=dict_chunks, top_k=10)
+            # Reconstruct chunks from reranked output
+            chunks = [r["chunk"] for r in reranked]
             
             # 4. Generate answer (Real or Mock LLM)
             import os
@@ -76,19 +135,37 @@ class ChatService:
             # Format context for the prompt
             context_str = "\n\n".join([f"[Source: {c.document_id}, Page: {c.page_numbers[0] if c.page_numbers else 'N/A'}] {c.content}" for c in chunks])
             
+            # Hostile-Witness System Prompt
             system_prompt = (
-                "You are an enterprise AI assistant. Answer questions strictly based on the provided context. "
-                "Do not use external knowledge or assumptions. Cite sources as [Source: <doc_id>, p.<page_num>]. "
-                "If the provided context does not contain sufficient facts to answer the question, state: "
-                "\"I could not find sufficient information in the provided context to answer your question.\" "
-                "Respond in clear, professional English."
+                "You are an expert Legal and Medical Assessor. You must answer questions strictly based on the provided context.\n"
+                "HOSTILE WITNESS PROTOCOL:\n"
+                "- Do NOT use external knowledge, assume, or extrapolate.\n"
+                "- If the provided context does not explicitly state the answer, you MUST reply: \"UNABLE TO VERIFY: I could not find sufficient information in the provided context to answer your question.\"\n"
+                "- Cite sources explicitly as [Source: <doc_id>, p.<page_num>]."
             )
             
+            # Check for compliance_tier=STRICT and unverified_structures
+            requires_strict_disclaimer = any(c.compliance_tier == "strict" for c in chunks)
+            unverified_issues = set()
+            for c in chunks:
+                if c.unverified_structures:
+                    unverified_issues.update(c.unverified_structures)
+                    
+            if requires_strict_disclaimer:
+                system_prompt += "\n- COMPLIANCE TIER STRICT: The documents queried are under strict compliance. Ensure maximum fidelity."
+            
             user_content = f"Context:\n{context_str}\n\nQuestion: {message}"
-            chat_messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ]
+            
+            # Fetch past history for multi-turn reasoning
+            past_messages = await self.memory.get_history(conv_id, limit=6)
+            
+            chat_messages = [{"role": "system", "content": system_prompt}]
+            
+            for past_msg in past_messages:
+                # Add historical messages (skip system/context, just raw Q&A)
+                chat_messages.append({"role": past_msg["role"], "content": past_msg["content"]})
+                
+            chat_messages.append({"role": "user", "content": user_content})
 
             generated_content = ""
             model_used = "mock-llm-v1"
@@ -135,6 +212,22 @@ class ChatService:
                     model_used = f"ollama-{ollama_model}"
                 except Exception as e:
                     logger.error("Failed to generate answer with Ollama", error=str(e))
+            elif llm_provider == "groq":
+                try:
+                    groq_key = os.getenv("GROQ_API_KEY")
+                    groq_model = os.getenv("LLM_MODEL", "groq/compound-mini")
+                    if groq_key:
+                        client = openai.AsyncOpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
+                        completion = await client.chat.completions.create(
+                            model=groq_model,
+                            messages=chat_messages
+                        )
+                        generated_content = completion.choices[0].message.content
+                        model_used = f"groq-{groq_model}"
+                    else:
+                        logger.error("Groq API key not configured")
+                except Exception as e:
+                    logger.error("Failed to generate answer with Groq", error=str(e))
 
             if not generated_content:
                 answer_parts = [f"Based on the documents (Mock Mode, set LLM_PROVIDER & API key to enable real generation), here is what I found regarding '{message}':\n"]
@@ -145,6 +238,13 @@ class ChatService:
                         page_ref = f"p.{cit.page_numbers[0]}" if cit.page_numbers else "unknown page"
                         answer_parts.append(f"• {cit.content_snippet} [Source: {cit.document_id}, {page_ref}]\n")
                 generated_content = "\n".join(answer_parts)
+                
+            # Append legal disclaimer if unverified structures were used in generation
+            if unverified_issues:
+                disclaimer = "\n\n*** LEGAL DISCLAIMER ***\nThis answer was derived from documents containing unverified or malformed structures: "
+                disclaimer += ", ".join(unverified_issues)
+                disclaimer += ". Please verify the original source document."
+                generated_content += disclaimer
             
             latency_ms = (time.time() - start_time) * 1000
             
@@ -161,7 +261,7 @@ class ChatService:
             
             # 6. Asynchronously trigger Ragas evaluation task
             try:
-                evaluator = RagasEvaluator(self.memory.db)
+                evaluator = RagasEvaluator()
                 asyncio.create_task(
                     evaluator.evaluate_turn(
                         tenant_id=tenant_id,

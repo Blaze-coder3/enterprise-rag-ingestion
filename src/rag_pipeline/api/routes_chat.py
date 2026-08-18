@@ -31,3 +31,19 @@ async def chat(request: ChatRequest, container = Depends(get_container)):
     )
     
     return response
+
+class ChatHistoryResponse(BaseModel):
+    conversation_id: str
+    messages: list[dict]
+
+@router.get("/history/{tenant_id}", response_model=ChatHistoryResponse)
+async def get_chat_history(tenant_id: str, container = Depends(get_container)):
+    """Fetch the most recent conversation history for a tenant."""
+    memory = ConversationMemory(container.metadata_store)
+    
+    conv_id = await memory.get_latest_conversation(tenant_id)
+    if not conv_id:
+        return ChatHistoryResponse(conversation_id="", messages=[])
+        
+    messages = await memory.get_history(conv_id, limit=20)
+    return ChatHistoryResponse(conversation_id=conv_id, messages=messages)

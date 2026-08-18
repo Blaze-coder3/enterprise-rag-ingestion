@@ -1,4 +1,21 @@
 services:
+  app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:////app/data/rag_pipeline.db
+      - BLOB_STORAGE_PATH=/app/data/blobs
+      - QDRANT_URL=http://qdrant:6333
+      - JAEGER_ENDPOINT=jaeger:4317
+    depends_on:
+      - qdrant
+      - jaeger
+
   qdrant:
     image: qdrant/qdrant:latest
     ports: 

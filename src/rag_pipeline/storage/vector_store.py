@@ -63,6 +63,12 @@ class VectorStore:
                 field_name="status",
                 field_schema=models.PayloadSchemaType.KEYWORD
             )
+            
+            await self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="access_groups",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
 
     async def upsert_chunks(self, chunks: List[Chunk]) -> None:
         """Upsert a batch of chunks into Qdrant."""
@@ -97,6 +103,7 @@ class VectorStore:
                 "embedding_model": chunk.embedding_model,
                 "embedding_version": chunk.embedding_version,
                 "tags": chunk.tags,
+                "access_groups": chunk.access_groups,
                 "document_type": chunk.document_type,
                 "status": chunk.status,
                 # Convert bounding boxes to dicts for JSON serialization

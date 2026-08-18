@@ -26,6 +26,7 @@ class DocumentModel(Base):
     current_version_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     content_hash: Mapped[str] = mapped_column(String)
     tags: Mapped[str] = mapped_column(JSON)
+    metadata_dict: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

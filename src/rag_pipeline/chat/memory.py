@@ -64,3 +64,14 @@ class ConversationMemory:
                 {"role": msg.role, "content": msg.content}
                 for msg in reversed(messages)
             ]
+
+    async def get_latest_conversation(self, tenant_id: str) -> str | None:
+        async with self.db.SessionLocal() as session:
+            result = await session.execute(
+                select(ConversationModel)
+                .where(ConversationModel.tenant_id == tenant_id)
+                .order_by(ConversationModel.created_at.desc())
+                .limit(1)
+            )
+            conv = result.scalar_one_or_none()
+            return conv.conversation_id if conv else None

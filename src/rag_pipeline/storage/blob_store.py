@@ -1,43 +1,39 @@
 import os
 import aiofiles
-from typing import Optional
+from pathlib import Path
+from ..config import settings
 
 class BlobStore:
-    """Local filesystem blob store for raw documents."""
+    """Simple local storage client for raw object storage."""
     
-    def __init__(self, base_path: str):
-        self.base_path = base_path
-        os.makedirs(self.base_path, exist_ok=True)
+    def __init__(self, base_dir: str = settings.blob_storage_path):
+        self.base_dir = Path(base_dir)
         
-    def _get_tenant_path(self, tenant_id: str) -> str:
-        tenant_path = os.path.join(self.base_path, tenant_id)
-        os.makedirs(tenant_path, exist_ok=True)
-        return tenant_path
+    async def save_document(self, tenant_id: str, document_id: str, version_id: str, file_bytes: bytes, filename: str) -> str:
+        """Saves raw file bytes to disk and returns the relative storage path."""
+        ext = Path(filename).suffix
+        if not ext:
+            ext = ".bin"
+            
+        rel_path = f"raw/{tenant_id}/{document_id}/{version_id}/original{ext}"
+        full_path = self.base_dir / rel_path
         
-    async def save_document(self, tenant_id: str, document_id: str, version_id: str, 
-                            file_bytes: bytes, filename: str) -> str:
-        """Saves a document and returns its path."""
-        tenant_path = self._get_tenant_path(tenant_id)
-        _, ext = os.path.splitext(filename)
-        
-        # Format: {document_id}_{version_id}{ext}
-        safe_filename = f"{document_id}_{version_id}{ext}"
-        full_path = os.path.join(tenant_path, safe_filename)
+        # Ensure directories exist
+        full_path.parent.mkdir(parents=True, exist_ok=True)
         
         async with aiofiles.open(full_path, 'wb') as f:
             await f.write(file_bytes)
             
-        return full_path
-        
-    async def read_document(self, tenant_id: str, document_id: str, version_id: str, filename: str) -> Optional[bytes]:
-        """Reads a document from storage."""
-        tenant_path = self._get_tenant_path(tenant_id)
-        _, ext = os.path.splitext(filename)
-        safe_filename = f"{document_id}_{version_id}{ext}"
-        full_path = os.path.join(tenant_path, safe_filename)
-        
-        if not os.path.exists(full_path):
-            return None
+        return rel_path
+
+    async def read_document(self, tenant_id: str, document_id: str, version_id: str, filename: str) -> bytes:
+        """Reads raw file bytes from disk."""
+        ext = Path(filename).suffix
+        if not ext:
+            ext = ".bin"
             
+        rel_path = f"raw/{tenant_id}/{document_id}/{version_id}/original{ext}"
+        full_path = self.base_dir / rel_path
+        
         async with aiofiles.open(full_path, 'rb') as f:
             return await f.read()

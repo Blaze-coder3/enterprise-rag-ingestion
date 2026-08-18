@@ -3,6 +3,16 @@ from typing import Any, List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+class DocumentDomain(str, Enum):
+    INSURANCE_BENEFITS = "insurance_benefits"
+    REGULATORY_FILING = "regulatory_filing"
+    CLINICAL_PROTOCOL = "clinical_protocol"
+    OTHER = "other"
+
+class ComplianceTier(str, Enum):
+    STRICT = "strict"
+    STANDARD = "standard"
+
 class DocumentStatus(str, Enum):
     RECEIVED = "received"
     VALIDATED = "validated"
@@ -80,12 +90,16 @@ class ParseQualityMetrics(BaseModel):
     table_count: int = 0
     avg_block_length: float = 0.0
     ocr_confidence: Optional[float] = None
+    extraction_confidence_score: Optional[float] = None
+    unverified_structures: List[str] = Field(default_factory=list)
 
 class CanonicalDocument(BaseModel):
     document_id: str
     tenant_id: str
     collection_id: str = "default"
     version_id: str
+    content_hash: str
+    access_groups: List[str] = Field(default_factory=list)
     title: str
     page_count: int
     content_tree: List[ContentNode] = Field(default_factory=list)
@@ -95,6 +109,13 @@ class CanonicalDocument(BaseModel):
     parse_quality: ParseQualityMetrics = Field(default_factory=ParseQualityMetrics)
     parser_name: str
     parser_version: str
+    document_domain: DocumentDomain = DocumentDomain.OTHER
+    effective_date: Optional[str] = None
+    expiration_date: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    compliance_tier: ComplianceTier = ComplianceTier.STANDARD
+    contains_tables: bool = False
+    is_malformed_flag: bool = False
 
 class SparseVector(BaseModel):
     indices: List[int]
@@ -120,10 +141,19 @@ class Chunk(BaseModel):
     sparse_embedding: Optional[SparseVector] = None
     embedding_model: str
     embedding_version: str
+    access_groups: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     document_type: Optional[str] = None
     status: str = "active"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    document_domain: DocumentDomain = DocumentDomain.OTHER
+    effective_date: Optional[str] = None
+    expiration_date: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    compliance_tier: ComplianceTier = ComplianceTier.STANDARD
+    contains_tables: bool = False
+    unverified_structures: List[str] = Field(default_factory=list)
+    is_malformed_flag: bool = False
 
 class IngestResult(BaseModel):
     job_id: str

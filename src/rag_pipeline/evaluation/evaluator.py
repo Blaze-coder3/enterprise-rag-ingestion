@@ -7,8 +7,12 @@ from ..observability.logging import get_logger
 
 logger = get_logger("evaluator")
 
-class RagasEvaluator:
-    """Evaluates RAG generation metrics (faithfulness, relevance) using Ragas & Heuristics."""
+class HeuristicEvaluator:
+    """
+    Evaluates RAG generation metrics (faithfulness, relevance) using token-overlap heuristics.
+    NOTE: This is a fast proxy for real RAGAS scores, which would require an LLM-as-judge
+    (and thus add latency). In a production environment, you would use the actual `ragas` library here.
+    """
     
     def __init__(self, metadata_store):
         self.metadata_store = metadata_store
@@ -72,7 +76,7 @@ class RagasEvaluator:
             )
             
             await self.metadata_store.log_chat_evaluation(eval_model)
-            logger.info("Ragas metrics logged successfully", message_id=message_id)
+            logger.info("Heuristic metrics logged successfully", message_id=message_id)
             
         except Exception as e:
-            logger.error("Ragas evaluation failed", error=str(e))
+            logger.error("Heuristic evaluation failed", error=str(e))

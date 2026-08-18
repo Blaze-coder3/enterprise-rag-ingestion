@@ -22,12 +22,20 @@ class RetrievedChunk(BaseModel):
     section_hierarchy: List[str]
     metadata: Dict[str, Any]
 
+    @property
+    def compliance_tier(self) -> Optional[str]:
+        return self.metadata.get("compliance_tier")
+
+    @property
+    def unverified_structures(self) -> List[str]:
+        return self.metadata.get("unverified_structures", [])
+
 class QueryEngine:
     def __init__(self, vector_store: VectorStore, embedder: BaseEmbedder):
         self.vector_store = vector_store
         self.embedder = embedder
         
-    async def hybrid_search(self, tenant_id: str, query_text: str, top_k: int = 10, collection_id: Optional[str] = None) -> List[RetrievedChunk]:
+    async def hybrid_search(self, tenant_id: str, query_text: str, top_k: int = 10, collection_id: Optional[str] = None, access_groups: Optional[List[str]] = None) -> List[RetrievedChunk]:
         """Performs hybrid search using Qdrant native prefetch + RRF."""
         start_time = time.time()
         
@@ -62,6 +70,14 @@ class QueryEngine:
                 models.FieldCondition(key="tenant_id", match=models.MatchValue(value=tenant_id)),
                 models.FieldCondition(key="status", match=models.MatchValue(value="active"))
             ]
+            
+            if access_groups:
+                must_filters.append(
+                    models.FieldCondition(
+                        key="access_groups",
+                        match=models.MatchAny(any=access_groups)
+                    )
+                )
             
             if collection_id:
                 must_filters.append(
